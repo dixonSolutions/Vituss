@@ -1,4 +1,4 @@
-# Vite
+# Vituss
 
 A design skeleton for a Vitess-style query router with **pluggable SQL
 dialect parsers** (MySQL, PostgreSQL, ANSI/generic), instead of Vitess's
