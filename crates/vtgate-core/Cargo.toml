@@ -1,0 +1,16 @@
+[package]
+name = "vtgate-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+sql-ast = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+# Dev-only: production code in this crate never depends on a specific
+# dialect (that's the whole point). Tests use two structurally different
+# backends to prove the router genuinely doesn't care which one it gets.
+sql-dialect-mysql = { workspace = true }
+sql-dialect-postgres = { workspace = true }
