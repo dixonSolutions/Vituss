@@ -1,0 +1,29 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/sql-ast",
+    "crates/sql-dialect-mysql",
+    "crates/sql-dialect-postgres",
+    "crates/sql-dialect-generic",
+    "crates/vtgate-core",
+    "crates/vtgate-cli",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+repository = "https://github.com/dixonSolutions/Vite"
+
+[workspace.dependencies]
+sql-ast = { path = "crates/sql-ast" }
+sql-dialect-mysql = { path = "crates/sql-dialect-mysql" }
+sql-dialect-postgres = { path = "crates/sql-dialect-postgres" }
+sql-dialect-generic = { path = "crates/sql-dialect-generic" }
+vtgate-core = { path = "crates/vtgate-core" }
+
+sqlparser = "0.52"
+pg_query = "6"
+thiserror = "1"
+anyhow = "1"
+clap = { version = "4", features = ["derive"] }
