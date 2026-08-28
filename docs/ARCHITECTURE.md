@@ -54,6 +54,45 @@ become `$1` or `@p1`, because rendering is a translation rather than a
 Dependencies point one way: `core → dialect → vindex/vschema → planner → engine
 → gate → wire`. No cycles, and no crate below the planner knows a cluster exists.
 
+## Types
+
+Routing a `SELECT` between engines is syntax. Routing a `CREATE TABLE` is *type
+systems*, which disagree about much more.
+
+A column type is decomposed into a neutral form — a base `SqlType` plus length,
+precision, unsignedness and whether the engine generates the value — and
+re-rendered by the target dialect:
+
+| written as | PostgreSQL gets | SQL Server gets | SQLite gets |
+|---|---|---|---|
+| `BIGINT UNSIGNED AUTO_INCREMENT` | `BIGSERIAL` | `BIGINT IDENTITY(1,1)` | `INTEGER` |
+| `INT UNSIGNED` | `BIGINT` | `BIGINT` | `INTEGER` |
+| `VARCHAR(128)` | `VARCHAR(128)` | `NVARCHAR(128)` | `TEXT` |
+| `TEXT` | `TEXT` | `NVARCHAR(MAX)` | `TEXT` |
+| `JSON` | `JSONB` | `NVARCHAR(MAX)` | `TEXT` |
+| `BLOB` | `BYTEA` | `VARBINARY(MAX)` | `BLOB` |
+| `DATETIME` | `TIMESTAMP` | `DATETIME2` | `DATETIME` |
+| PostgreSQL `UUID` | `UUID` | `UNIQUEIDENTIFIER` | `TEXT` |
+
+Three rules make this safe rather than merely convenient:
+
+- **Widen, never truncate.** An unsigned 32-bit column becomes `BIGINT` on an
+  engine without unsigned types, because the alternative silently loses the top
+  half of its range. An unsigned 64-bit one becomes `NUMERIC(20)`.
+- **A generated key drops its unsignedness.** It counts up from 1, so the range
+  was never the point, and keeping it would force a decimal type on three of the
+  four engines.
+- **Say what was lost.** A `CHARACTER SET`, an `ON UPDATE CURRENT_TIMESTAMP`, a
+  MySQL `ENGINE=` clause — dropped, and reported as a warning on the result. The
+  person running the DDL is the one who can judge whether it mattered.
+
+A type nothing else has — a PostgreSQL `inet`, an array, an enum — is passed
+through untouched with a warning. Guessing would be worse.
+
+The same decomposition drives the *value* path: every driver encodes and decodes
+through the neutral `Value` enum, so a `NUMERIC` read from PostgreSQL and a
+`DECIMAL` read from MySQL arrive at the planner as the same thing.
+
 ## Sharding
 
 A **keyspace** is one logical database. A **shard** owns a half-open range of

@@ -3,6 +3,9 @@ name = "vituss-planner"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+repository.workspace = true
+keywords = ["database", "sharding", "sql", "query-planner"]
+categories = ["database", "database-implementations"]
 description = "Turns a parsed statement into a routing plan over shards"
 
 [dependencies]

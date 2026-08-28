@@ -58,7 +58,8 @@ Working:
 - Collocated joins pushed into the shard; non-collocated ones as nested loops
 - `INSERT` routed per row, with sequences and owned lookup-vindex maintenance
 - `UPDATE` / `DELETE` with lookup upkeep and a locked pre-read
-- DDL broadcast to every shard of a keyspace
+- DDL broadcast to every shard of a keyspace, with column types translated for
+  each shard's engine
 - `UNION` / `UNION ALL`
 - `USE ks`, `USE ks@replica`, `USE ks:-80`
 
@@ -94,6 +95,10 @@ Not implemented:
 | VReplication / VStream | Not ported |
 
 ## Deliberate differences
+
+**DDL crosses type systems.** Vitess has no need for this — every shard is
+MySQL. Vituss decomposes column types into a neutral form and re-renders them per
+engine, widening rather than truncating, and reporting anything it had to drop.
 
 **Configuration is declarative.** A cluster is one reviewable file, applied
 idempotently, rather than a sequence of `vtctl` commands. The imperative

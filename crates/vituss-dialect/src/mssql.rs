@@ -5,6 +5,7 @@ use sqlparser::dialect::MsSqlDialect;
 use vituss_core::{Code, Error, SqlType};
 
 use crate::caps::{Capabilities, IdentifierCase, PlaceholderStyle, RowLock, TwoPcStyle};
+use crate::ddl::{self, ColumnType};
 use crate::dialect::{NativeError, SqlDialect};
 use crate::introspect::Introspection;
 
@@ -47,6 +48,7 @@ impl MsSql {
                 // Change Data Capture / Change Tracking.
                 supports_change_capture: true,
                 supports_create_database_in_tx: false,
+                auto_increment_in_type: false,
                 supports_advisory_locks: true,
             },
             introspection: Introspection {
@@ -138,6 +140,45 @@ impl SqlDialect for MsSql {
             "uniqueidentifier" => SqlType::Uuid,
             _ => SqlType::Unknown,
         }
+    }
+
+
+    fn render_column_type(&self, c: &ColumnType) -> String {
+        match c.base {
+            SqlType::Bool => "BIT".to_string(),
+            // TINYINT is unsigned 0-255 here, so a signed source needs SMALLINT.
+            SqlType::Int8 if c.unsigned => "TINYINT".to_string(),
+            SqlType::Int8 | SqlType::Int16 => "SMALLINT".to_string(),
+            SqlType::Int32 if c.unsigned => "BIGINT".to_string(),
+            SqlType::Int32 => "INT".to_string(),
+            SqlType::Int64 if c.unsigned => "DECIMAL(20, 0)".to_string(),
+            SqlType::Int64 => "BIGINT".to_string(),
+            SqlType::Uint64 => "DECIMAL(20, 0)".to_string(),
+            SqlType::Float32 => "REAL".to_string(),
+            SqlType::Float64 => "FLOAT".to_string(),
+            SqlType::Decimal => ddl::decimal(c, "DECIMAL"),
+            // N-prefixed types store UTF-16, which is what makes a column able to
+            // hold what a utf8mb4 column held.
+            SqlType::Char => ddl::sized(c, "NCHAR", 1),
+            SqlType::VarChar => ddl::sized_or(c, "NVARCHAR", "NVARCHAR(MAX)"),
+            SqlType::Text => "NVARCHAR(MAX)".to_string(),
+            SqlType::Binary => ddl::sized(c, "BINARY", 1),
+            SqlType::VarBinary => ddl::sized_or(c, "VARBINARY", "VARBINARY(MAX)"),
+            SqlType::Blob => "VARBINARY(MAX)".to_string(),
+            SqlType::Date => "DATE".to_string(),
+            SqlType::Time => "TIME".to_string(),
+            SqlType::DateTime => "DATETIME2".to_string(),
+            SqlType::Timestamp => "DATETIMEOFFSET".to_string(),
+            // No JSON type before SQL Server 2025; NVARCHAR(MAX) is what the
+            // JSON functions operate on anyway.
+            SqlType::Json => "NVARCHAR(MAX)".to_string(),
+            SqlType::Uuid => "UNIQUEIDENTIFIER".to_string(),
+            SqlType::Null | SqlType::Unknown => c.source_text.clone(),
+        }
+    }
+
+    fn auto_increment_option(&self, _column: &ColumnType) -> Option<String> {
+        Some("IDENTITY(1,1)".to_string())
     }
 
     fn native_error(&self, err: &Error) -> NativeError {

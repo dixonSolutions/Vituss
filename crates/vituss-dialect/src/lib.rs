@@ -28,6 +28,7 @@
 //! other crate needs to know it exists.
 
 pub mod caps;
+pub mod ddl;
 pub mod dialect;
 pub mod introspect;
 pub mod mssql;
@@ -38,6 +39,7 @@ pub mod sqlite;
 
 pub use caps::{Capabilities, IdentifierCase, PlaceholderStyle, RowLock, TwoPcStyle};
 pub use dialect::{get, register, registered, two_pc_compatible, DialectRef, NativeError, SqlDialect, TwoPcSql};
+pub use ddl::ColumnType;
 pub use introspect::Introspection;
 pub use mssql::MsSql;
 pub use mysql::MySql;

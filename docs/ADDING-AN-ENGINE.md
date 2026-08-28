@@ -32,7 +32,12 @@ impl SqlDialect for CockroachDb {
     fn introspection(&self) -> &vituss_dialect::Introspection { &self.introspection }
     fn default_port(&self) -> u16 { 26257 }
 
+    // The engine's type names → the neutral type system.
     fn map_native_type(&self, native: &str) -> vituss_core::SqlType { /* … */ }
+
+    // …and back out again, which is what lets a CREATE TABLE written for another
+    // engine run here. See "Column types" below.
+    fn render_column_type(&self, c: &vituss_dialect::ColumnType) -> String { /* … */ }
     fn native_error(&self, err: &vituss_core::Error) -> vituss_dialect::NativeError { /* … */ }
     fn system_schemas(&self) -> &'static [&'static str] { &["information_schema", "crdb_internal"] }
 }
@@ -88,6 +93,38 @@ parameter — the schema name — and must return the documented columns
 If the engine has no schema catalogue, the query still has to *use* the parameter
 — SQLite appends `AND ?1 IS NOT NULL`, which keeps the one-parameter contract
 without changing the result.
+
+### Column types
+
+`map_native_type` and `render_column_type` are inverses, and both are required.
+The second is where a schema written for another engine becomes a schema this one
+can execute:
+
+```rust
+fn render_column_type(&self, c: &ColumnType) -> String {
+    match c.base {
+        SqlType::Bool   => "BOOLEAN".into(),
+        // No unsigned types here, so widen rather than truncate the range.
+        SqlType::Int32 if c.unsigned => "BIGINT".into(),
+        SqlType::Int32  => "INTEGER".into(),
+        SqlType::Uint64 => "NUMERIC(20)".into(),
+        SqlType::Decimal => ddl::decimal(c, "NUMERIC"),
+        SqlType::VarChar => ddl::sized_or(c, "VARCHAR", "TEXT"),
+        SqlType::Json   => "JSONB".into(),
+        // A type this layer could not classify. Passing it through is the least
+        // wrong option, and the caller is warned.
+        SqlType::Null | SqlType::Unknown => c.source_text.clone(),
+        // …
+    }
+}
+```
+
+If the engine declares a generated key as a column option, return it from
+`auto_increment_option` (`AUTO_INCREMENT`, `IDENTITY(1,1)`). If it folds the key
+into the type instead — PostgreSQL's `SERIAL` — check `c.auto_increment` at the
+top of `render_column_type`, return `None` from `auto_increment_option`, and set
+`auto_increment_in_type: true` in the capabilities so the translator knows the key
+is accounted for.
 
 ### Overrides
 

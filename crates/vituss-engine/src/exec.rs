@@ -178,7 +178,8 @@ impl Executor {
         for shard in shards {
             let target = Target::new(keyspace, shard, tablet_type);
             let dialect = self.gateway.dialect_for(keyspace, shard).await?;
-            let rendered = dialect.render(statement, bind_vars, self.client_dialect.as_ref())?;
+            let rendered =
+                vituss_dialect::render::render_for(statement, bind_vars, self.client_dialect.as_ref(), dialect.as_ref())?;
             futures.push(async move {
                 self.gateway
                     .execute(&target, &rendered.sql, &rendered.params, session)
@@ -403,7 +404,12 @@ impl Executor {
 
             let (statement, bind_vars) =
                 build_multi_row_insert(&plan.statement, plan.columns.len(), &indexes, &rows)?;
-            let rendered = dialect.render(&statement, &bind_vars, self.client_dialect.as_ref())?;
+            let rendered = vituss_dialect::render::render_for(
+                &statement,
+                &bind_vars,
+                self.client_dialect.as_ref(),
+                dialect.as_ref(),
+            )?;
             let result = self
                 .gateway
                 .execute(&target, &rendered.sql, &rendered.params, session)
@@ -551,7 +557,12 @@ impl Executor {
         for shard in &shards {
             let target = Target::new(&ddl.keyspace, shard, TabletType::Primary);
             let dialect = self.gateway.dialect_for(&ddl.keyspace, shard).await?;
-            let rendered = dialect.render(&ddl.statement, &BindVars::new(), self.client_dialect.as_ref())?;
+            let rendered = vituss_dialect::render::render_for(
+                &ddl.statement,
+                &BindVars::new(),
+                self.client_dialect.as_ref(),
+                dialect.as_ref(),
+            )?;
             let result = self
                 .gateway
                 .execute(&target, &rendered.sql, &rendered.params, session)
@@ -567,6 +578,15 @@ impl Executor {
                     )
                 })?;
             out.rows_affected += result.rows_affected;
+            // What the type translation could not carry across. Deduplicated
+            // rather than repeated per shard: every shard on the same engine loses
+            // the same thing. Each message names the engine it applies to, so a
+            // keyspace mid-migration across two of them still reads correctly.
+            for w in rendered.warnings {
+                if !out.warnings.contains(&w) {
+                    out.warnings.push(w);
+                }
+            }
         }
         Ok(out)
     }

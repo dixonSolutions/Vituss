@@ -12,11 +12,12 @@ use sqlparser::ast::Statement;
 use sqlparser::dialect::Dialect as ParserDialect;
 use sqlparser::parser::Parser;
 
-use vituss_core::{BindVars, Code, Error, Result, SqlType};
+use vituss_core::{Code, Error, Result, SqlType};
 
 use crate::caps::{Capabilities, TwoPcStyle};
+use crate::ddl::ColumnType;
 use crate::introspect::Introspection;
-use crate::render::{self, RenderedQuery};
+use crate::render;
 
 /// How an error should be reported to a client speaking this engine's protocol.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -103,13 +104,27 @@ pub trait SqlDialect: Send + Sync + 'static {
         }
     }
 
-    /// Render a planned statement as executable SQL for this engine.
-    fn render(&self, stmt: &Statement, bind_vars: &BindVars, source: &dyn SqlDialect) -> Result<RenderedQuery> {
-        render::render_with(stmt, bind_vars, source, self.name(), self.capabilities())
-    }
-
     /// Map an engine's own type name onto the neutral [`SqlType`].
     fn map_native_type(&self, native: &str) -> SqlType;
+
+    /// Render a neutral column type as this engine's own declaration.
+    ///
+    /// The inverse of [`SqlDialect::map_native_type`], and the reason a
+    /// `CREATE TABLE` written for one engine can be executed on another. Where
+    /// this engine has no equivalent — no unsigned integers, no JSON type — the
+    /// implementation picks the nearest type that holds the same values; the
+    /// translation layer separately tells the operator that it did so.
+    fn render_column_type(&self, column: &ColumnType) -> String;
+
+    /// The column option that makes this engine generate the value, if it uses
+    /// one.
+    ///
+    /// `None` means the engine expresses it some other way: PostgreSQL folds it
+    /// into the type (`BIGSERIAL`), SQLite gets it for free on an
+    /// `INTEGER PRIMARY KEY`.
+    fn auto_increment_option(&self, _column: &ColumnType) -> Option<String> {
+        None
+    }
 
     /// Translate a Vituss error into what a client of this engine expects to see.
     fn native_error(&self, err: &Error) -> NativeError;

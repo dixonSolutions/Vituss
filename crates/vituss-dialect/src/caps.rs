@@ -93,6 +93,11 @@ pub struct Capabilities {
     pub supports_create_database_in_tx: bool,
     /// Transaction-scoped advisory locks, used to serialise lookup-vindex writes.
     pub supports_advisory_locks: bool,
+    /// The engine declares a generated key as part of the column *type*
+    /// (PostgreSQL's `SERIAL`) rather than as a column option. Engines where this
+    /// is false and that also have no option are relying on something implicit,
+    /// which the DDL translator has to check for.
+    pub auto_increment_in_type: bool,
 }
 
 impl Capabilities {

@@ -3,6 +3,9 @@ name = "vituss-gate"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+repository.workspace = true
+keywords = ["database", "sharding", "sql", "proxy", "distributed"]
+categories = ["database", "database-implementations"]
 description = "The query gateway: plans, routes and executes client statements across shards"
 
 [dependencies]

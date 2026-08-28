@@ -5,6 +5,7 @@ use sqlparser::dialect::MySqlDialect;
 use vituss_core::{Code, Error, SqlType};
 
 use crate::caps::{Capabilities, IdentifierCase, PlaceholderStyle, RowLock, TwoPcStyle};
+use crate::ddl::{self, ColumnType};
 use crate::dialect::{NativeError, SqlDialect, TwoPcSql};
 use crate::introspect::Introspection;
 
@@ -40,6 +41,7 @@ impl MySql {
                 supports_multi_statement: true,
                 supports_change_capture: true,
                 supports_create_database_in_tx: true,
+                auto_increment_in_type: false,
                 supports_advisory_locks: true,
             },
             introspection: Introspection {
@@ -127,6 +129,43 @@ impl SqlDialect for MySql {
             "json" => SqlType::Json,
             _ => SqlType::Unknown,
         }
+    }
+
+
+    fn render_column_type(&self, c: &ColumnType) -> String {
+        let u = if c.unsigned { " UNSIGNED" } else { "" };
+        match c.base {
+            // MySQL has no boolean; TINYINT(1) is what every client library reads
+            // back as one.
+            SqlType::Bool => "TINYINT(1)".to_string(),
+            SqlType::Int8 => format!("TINYINT{u}"),
+            SqlType::Int16 => format!("SMALLINT{u}"),
+            SqlType::Int32 => format!("INT{u}"),
+            SqlType::Int64 => format!("BIGINT{u}"),
+            SqlType::Uint64 => "BIGINT UNSIGNED".to_string(),
+            SqlType::Float32 => "FLOAT".to_string(),
+            SqlType::Float64 => "DOUBLE".to_string(),
+            SqlType::Decimal => ddl::decimal(c, "DECIMAL"),
+            SqlType::Char => ddl::sized(c, "CHAR", 1),
+            SqlType::VarChar => ddl::sized(c, "VARCHAR", 255),
+            SqlType::Text => "TEXT".to_string(),
+            SqlType::Binary => ddl::sized(c, "BINARY", 1),
+            SqlType::VarBinary => ddl::sized(c, "VARBINARY", 255),
+            SqlType::Blob => "BLOB".to_string(),
+            SqlType::Date => "DATE".to_string(),
+            SqlType::Time => "TIME".to_string(),
+            SqlType::DateTime => "DATETIME".to_string(),
+            SqlType::Timestamp => "TIMESTAMP".to_string(),
+            SqlType::Json => "JSON".to_string(),
+            // No UUID type. CHAR(36) holds the canonical text form, which is what
+            // applications compare and index on.
+            SqlType::Uuid => "CHAR(36)".to_string(),
+            SqlType::Null | SqlType::Unknown => c.source_text.clone(),
+        }
+    }
+
+    fn auto_increment_option(&self, _column: &ColumnType) -> Option<String> {
+        Some("AUTO_INCREMENT".to_string())
     }
 
     fn native_error(&self, err: &Error) -> NativeError {

@@ -3,6 +3,9 @@ name = "vituss-vindex"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+repository.workspace = true
+keywords = ["database", "sharding", "hashing", "partitioning"]
+categories = ["database", "database-implementations"]
 description = "Pluggable sharding functions (vindexes) mapping column values to keyspace IDs"
 
 [dependencies]

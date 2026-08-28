@@ -116,9 +116,27 @@ provides.
 | Row limiting | `LIMIT`/`OFFSET` | `LIMIT`/`OFFSET` | `OFFSET … FETCH` | `LIMIT`/`OFFSET` |
 | Generated keys | last-insert-id | `RETURNING` | `OUTPUT INSERTED` | last-insert-rowid |
 | Distributed commit | XA | `PREPARE TRANSACTION` | MS DTC only | none |
-| Row lock | `FOR UPDATE` | `FOR UPDATE` | `WITH (UPDLOCK)` | `FOR UPDATE` |
+| Row lock | `FOR UPDATE` | `FOR UPDATE` | `WITH (UPDLOCK)` | none needed |
+| Generated key | `AUTO_INCREMENT` | `BIGSERIAL` | `IDENTITY(1,1)` | implicit rowid |
+| Unsigned integers | yes | no | no | no |
 
-Every one of those is described by the dialect, not branched on by the planner.
+Every one of those is described by the dialect, not branched on by the planner —
+including the column types themselves. A `CREATE TABLE` written by a MySQL client
+arrives at a PostgreSQL shard as idiomatic PostgreSQL:
+
+```sql
+-- what the client wrote
+CREATE TABLE user (user_id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+                   payload JSON, PRIMARY KEY (user_id)) ENGINE=InnoDB
+
+-- what the PostgreSQL shard receives
+CREATE TABLE user (user_id BIGSERIAL NOT NULL, payload JSONB, PRIMARY KEY (user_id))
+```
+
+Where something cannot survive the crossing — a `CHARACTER SET`, an
+`ON UPDATE CURRENT_TIMESTAMP`, an unsigned range that has to widen — the statement
+still runs and the result carries a warning saying what was dropped and why.
+
 Where an engine genuinely cannot do something — SQL Server's distributed
 transactions need an external coordinator, SQLite has none at all — Vituss
 **refuses** the operation rather than silently degrading it. A caller who asked
@@ -182,8 +200,8 @@ scatter / reference / unsharded); cross-shard merge-sort, limit, distinct, and
 aggregation including a correct `AVG`; collocated joins pushed into the shard and
 non-collocated ones executed as nested loops; INSERT routed per row with owned
 lookup-vindex maintenance; UPDATE and DELETE with lookup upkeep; DDL broadcast;
-multi-shard transactions with optional two-phase commit; MySQL and PostgreSQL
-protocol servers; a declarative control plane.
+multi-shard transactions with optional two-phase commit; cross-engine DDL type
+translation; MySQL and PostgreSQL protocol servers; a declarative control plane.
 
 **Not yet:** VReplication and resharding *data movement* (the metadata side of a
 split is there; nothing copies rows yet), VTOrc's automatic failover, online DDL,
@@ -207,7 +225,7 @@ does not move a single row.
 ## Development
 
 ```bash
-cargo test --workspace          # 144 tests, no external services needed
+cargo test --workspace          # 155 tests, no external services needed
 cargo build --release
 ```
 
@@ -219,12 +237,16 @@ rather than mocked:
 - `crates/vituss-wire/tests/mysql_protocol.rs` — a real driver over TCP
 - `crates/vituss-planner/tests/planning.rs` — every routing decision
 - `crates/vituss-vindex/tests/vitess_compat.rs` — Vitess byte compatibility
+- `crates/vituss-dialect/tests/ddl_translation.rs` — schemas across type systems
 
 To build with only the engines you need:
 
 ```bash
-cargo build --no-default-features --features sqlite-only -p vituss-cli
+cargo build --no-default-features --features sqlite-only -p vituss
 ```
+
+Not on crates.io yet — see [docs/PUBLISHING.md](docs/PUBLISHING.md) for what that
+would take and whether it is worth doing.
 
 ## Licence
 

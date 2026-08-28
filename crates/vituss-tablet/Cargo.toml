@@ -3,6 +3,9 @@ name = "vituss-tablet"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+repository.workspace = true
+keywords = ["database", "sharding", "sql", "connection-pool"]
+categories = ["database", "database-implementations"]
 description = "The shard-side server: owns one database, its connections, its transactions and its schema"
 
 [dependencies]

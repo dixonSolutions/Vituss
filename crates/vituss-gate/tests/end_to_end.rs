@@ -507,3 +507,35 @@ async fn deleting_a_row_removes_its_lookup_entry() {
     let lookup = run(&c, &s, "SELECT email FROM email_lookup").await;
     assert!(lookup.rows.is_empty(), "a deleted row must not leave its lookup entry behind");
 }
+
+#[tokio::test]
+async fn ddl_column_types_are_translated_for_the_shard_engine() {
+    let c = cluster(&["-80", "80-"]).await;
+    let s = session();
+
+    // Written by a MySQL client. None of `BIGINT UNSIGNED`, `AUTO_INCREMENT` or
+    // `JSON` means anything to SQLite, and passing them through verbatim used to
+    // be a syntax error.
+    let r = run(
+        &c,
+        &s,
+        "CREATE TABLE user (\
+            user_id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY, \
+            name VARCHAR(64) CHARACTER SET utf8mb4, \
+            profile JSON) ENGINE=InnoDB",
+    )
+    .await;
+
+    // Dropping the charset and the storage engine changes nothing about the data,
+    // but the operator is told rather than left to find out.
+    assert!(
+        r.warnings.iter().any(|w| w.contains("CHARACTER SET")),
+        "{:?}",
+        r.warnings
+    );
+
+    // And the table really works: the generated key is assigned by the shard.
+    run(&c, &s, "INSERT INTO user (user_id, name) VALUES (1, 'ada')").await;
+    let got = run(&c, &s, "SELECT name FROM user WHERE user_id = 1").await;
+    assert_eq!(got.rows[0][0], Value::Text("ada".into()));
+}

@@ -3,6 +3,9 @@ name = "vituss-wire"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+repository.workspace = true
+keywords = ["mysql", "postgres", "protocol", "database", "server"]
+categories = ["database", "database-implementations"]
 description = "Client-facing wire protocol servers: clients connect to Vituss with their own driver"
 
 [features]

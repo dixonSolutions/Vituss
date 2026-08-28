@@ -3,6 +3,9 @@ name = "vituss-ctl"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+repository.workspace = true
+keywords = ["database", "sharding", "configuration", "cluster"]
+categories = ["database", "database-implementations"]
 description = "Control plane: declarative cluster configuration and administrative operations"
 
 [dependencies]

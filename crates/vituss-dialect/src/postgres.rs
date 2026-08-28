@@ -5,6 +5,7 @@ use sqlparser::dialect::PostgreSqlDialect;
 use vituss_core::{Code, Error, SqlType};
 
 use crate::caps::{Capabilities, IdentifierCase, PlaceholderStyle, RowLock, TwoPcStyle};
+use crate::ddl::{self, ColumnType};
 use crate::dialect::{NativeError, SqlDialect, TwoPcSql};
 use crate::introspect::Introspection;
 
@@ -44,6 +45,7 @@ impl Postgres {
                 supports_change_capture: true,
                 // CREATE DATABASE cannot run inside a transaction block.
                 supports_create_database_in_tx: false,
+                auto_increment_in_type: true,
                 supports_advisory_locks: true,
             },
             introspection: Introspection {
@@ -135,6 +137,46 @@ impl SqlDialect for Postgres {
             "json" | "jsonb" => SqlType::Json,
             "uuid" => SqlType::Uuid,
             _ => SqlType::Unknown,
+        }
+    }
+
+
+    fn render_column_type(&self, c: &ColumnType) -> String {
+        // A generated key is part of the type here, not a column option.
+        if c.auto_increment {
+            return match c.base {
+                SqlType::Int8 | SqlType::Int16 => "SMALLSERIAL".to_string(),
+                SqlType::Int32 => "SERIAL".to_string(),
+                _ => "BIGSERIAL".to_string(),
+            };
+        }
+        match c.base {
+            SqlType::Bool => "BOOLEAN".to_string(),
+            SqlType::Int8 | SqlType::Int16 => "SMALLINT".to_string(),
+            // An unsigned 32-bit value does not fit in INTEGER, so it is widened
+            // rather than silently truncated at the top of its range.
+            SqlType::Int32 if c.unsigned => "BIGINT".to_string(),
+            SqlType::Int32 => "INTEGER".to_string(),
+            SqlType::Int64 if c.unsigned => "NUMERIC(20)".to_string(),
+            SqlType::Int64 => "BIGINT".to_string(),
+            // u64's range exceeds BIGINT; NUMERIC(20) is the smallest exact type
+            // that holds all of it.
+            SqlType::Uint64 => "NUMERIC(20)".to_string(),
+            SqlType::Float32 => "REAL".to_string(),
+            SqlType::Float64 => "DOUBLE PRECISION".to_string(),
+            SqlType::Decimal => ddl::decimal(c, "NUMERIC"),
+            SqlType::Char => ddl::sized(c, "CHAR", 1),
+            SqlType::VarChar => ddl::sized_or(c, "VARCHAR", "TEXT"),
+            SqlType::Text => "TEXT".to_string(),
+            // One binary type, whatever the source called it.
+            SqlType::Binary | SqlType::VarBinary | SqlType::Blob => "BYTEA".to_string(),
+            SqlType::Date => "DATE".to_string(),
+            SqlType::Time => "TIME".to_string(),
+            SqlType::DateTime => "TIMESTAMP".to_string(),
+            SqlType::Timestamp => "TIMESTAMPTZ".to_string(),
+            SqlType::Json => "JSONB".to_string(),
+            SqlType::Uuid => "UUID".to_string(),
+            SqlType::Null | SqlType::Unknown => c.source_text.clone(),
         }
     }
 

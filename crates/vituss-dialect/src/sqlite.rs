@@ -15,6 +15,7 @@ use sqlparser::dialect::SQLiteDialect;
 use vituss_core::{Code, Error, SqlType};
 
 use crate::caps::{Capabilities, IdentifierCase, PlaceholderStyle, RowLock, TwoPcStyle};
+use crate::ddl::ColumnType;
 use crate::dialect::{NativeError, SqlDialect};
 use crate::introspect::Introspection;
 
@@ -51,6 +52,7 @@ impl Sqlite {
                 supports_multi_statement: false,
                 supports_change_capture: false,
                 supports_create_database_in_tx: false,
+                auto_increment_in_type: false,
                 supports_advisory_locks: false,
             },
             // SQLite has no schema catalog, so each query carries a trivially
@@ -129,6 +131,33 @@ impl SqlDialect for Sqlite {
             SqlType::Decimal
         }
     }
+
+
+    fn render_column_type(&self, c: &ColumnType) -> String {
+        // SQLite has five storage classes and uses the declared type only to pick
+        // an affinity, so the mapping collapses hard. The names chosen here are
+        // the ones whose affinity matches how the driver decodes the values back.
+        match c.base {
+            SqlType::Bool | SqlType::Int8 | SqlType::Int16 | SqlType::Int32 | SqlType::Int64
+            | SqlType::Uint64 => "INTEGER".to_string(),
+            SqlType::Float32 | SqlType::Float64 => "REAL".to_string(),
+            SqlType::Decimal => "NUMERIC".to_string(),
+            SqlType::Char | SqlType::VarChar | SqlType::Text | SqlType::Json | SqlType::Uuid => {
+                "TEXT".to_string()
+            }
+            SqlType::Binary | SqlType::VarBinary | SqlType::Blob => "BLOB".to_string(),
+            // These carry no numeric affinity, so ISO-8601 text survives intact
+            // while the column still reads back as temporal metadata.
+            SqlType::Date => "DATE".to_string(),
+            SqlType::Time => "TIME".to_string(),
+            SqlType::DateTime | SqlType::Timestamp => "DATETIME".to_string(),
+            SqlType::Null | SqlType::Unknown => c.source_text.clone(),
+        }
+    }
+
+    // No option: an INTEGER PRIMARY KEY is already an alias for the rowid and
+    // assigns itself. SQLite's `AUTOINCREMENT` keyword only suppresses id reuse,
+    // and it is a syntax error anywhere but on such a column.
 
     fn native_error(&self, err: &Error) -> NativeError {
         if let Some(code) = err.native_code {

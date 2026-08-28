@@ -19,7 +19,7 @@ use sqlparser::tokenizer::{Token, Tokenizer, Word};
 
 use vituss_core::{BindVars, Error, Result, Value};
 
-use crate::caps::{Capabilities, IdentifierCase, PlaceholderStyle, RowLock};
+use crate::caps::{IdentifierCase, PlaceholderStyle, RowLock};
 use crate::SqlDialect;
 
 /// A statement rendered for one specific engine.
@@ -28,11 +28,17 @@ pub struct RenderedQuery {
     pub sql: String,
     /// Bind values in the order the placeholders appear.
     pub params: Vec<Value>,
+    /// Things the translation could not carry across to this engine — a column
+    /// option it has no equivalent for, an unsigned range it had to widen.
+    ///
+    /// Surfaced to the client rather than logged, because the person running a
+    /// DDL is the one who can decide whether the difference matters.
+    pub warnings: Vec<String>,
 }
 
 impl RenderedQuery {
     pub fn new(sql: impl Into<String>) -> Self {
-        Self { sql: sql.into(), params: Vec::new() }
+        Self { sql: sql.into(), params: Vec::new(), warnings: Vec::new() }
     }
 }
 
@@ -126,29 +132,20 @@ pub fn requote_identifiers(
     Ok(out)
 }
 
-fn render_word(w: &Word, target_quote: char, target_case: IdentifierCase) -> String {
-    let needs_quote = match w.quote_style {
-        // Already quoted in the source: keep it quoted, just change the character.
-        Some(_) => true,
-        None => {
-            // Unquoted. If the target folds case and the identifier is not already
-            // in the folded case, quoting preserves the name the user wrote.
-            // Keywords are left alone — quoting them would turn them into names.
-            if w.keyword != sqlparser::keywords::Keyword::NoKeyword {
-                false
-            } else {
-                match target_case {
-                    IdentifierCase::FoldLower => w.value.chars().any(|c| c.is_ascii_uppercase()),
-                    IdentifierCase::FoldUpper => w.value.chars().any(|c| c.is_ascii_lowercase()),
-                    _ => false,
-                }
-            }
-        }
-    };
-    if !needs_quote {
-        return w.value.clone();
+fn render_word(w: &Word, target_quote: char, _target_case: IdentifierCase) -> String {
+    // Only words the source quoted are re-quoted. An unquoted word is left exactly
+    // as written, and deliberately so: at this point the token stream contains
+    // keywords, function names and rendered column types as well as identifiers,
+    // and nothing here can tell them apart. Quoting an unquoted name to preserve
+    // its case under a folding target would also quote `BIGSERIAL`.
+    //
+    // Consistency is what makes that safe. A table created through Vituss went
+    // through the same folding as the queries that read it, so the names agree;
+    // it is only a name that was quoted at creation that must stay quoted.
+    match w.quote_style {
+        Some(_) => quote_with(&w.value, target_quote),
+        None => w.value.clone(),
     }
-    quote_with(&w.value, target_quote)
 }
 
 /// Quote an identifier with the engine's quote character, escaping any embedded
@@ -169,18 +166,26 @@ pub fn render_with(
     stmt: &Statement,
     bind_vars: &BindVars,
     source: &dyn SqlDialect,
-    target_name: &str,
-    target_caps: &Capabilities,
+    target: &dyn SqlDialect,
 ) -> Result<RenderedQuery> {
+    let (target_name, target_caps) = (target.name(), target.capabilities());
     let (mut bound, params) = bind(stmt, bind_vars, target_caps.placeholder_style)?;
     translate_row_locks(&mut bound, target_caps.row_lock);
-    let sql = bound.to_string();
-    let sql = if source.name() == target_name {
-        sql
-    } else {
-        requote_identifiers(&sql, source.parser(), target_caps.identifier_quote, target_caps.identifier_case)?
-    };
-    Ok(RenderedQuery { sql, params })
+
+    if source.name() == target_name {
+        return Ok(RenderedQuery { sql: bound.to_string(), params, warnings: Vec::new() });
+    }
+
+    // Different engine: column types have to be translated too, or a
+    // `CREATE TABLE` written for one would be nonsense on the other.
+    let warnings = crate::ddl::translate(&mut bound, source, target);
+    let sql = requote_identifiers(
+        &bound.to_string(),
+        source.parser(),
+        target_caps.identifier_quote,
+        target_caps.identifier_case,
+    )?;
+    Ok(RenderedQuery { sql, params, warnings })
 }
 
 /// Re-express a `FOR UPDATE` in the target engine's terms.
@@ -247,7 +252,7 @@ pub fn render_for(
     source: &dyn SqlDialect,
     target: &dyn SqlDialect,
 ) -> Result<RenderedQuery> {
-    render_with(stmt, bind_vars, source, target.name(), target.capabilities())
+    render_with(stmt, bind_vars, source, target)
 }
 
 #[cfg(test)]

@@ -3,6 +3,9 @@ name = "vituss-core"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+repository.workspace = true
+keywords = ["database", "sharding", "sql", "distributed"]
+categories = ["database", "database-implementations"]
 description = "Core value, result, key-range and error types shared by all Vituss components"
 
 [dependencies]

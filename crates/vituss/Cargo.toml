@@ -1,8 +1,11 @@
 [package]
-name = "vituss-cli"
+name = "vituss"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+repository.workspace = true
+keywords = ["database", "sharding", "mysql", "postgres", "vitess"]
+categories = ["database", "command-line-utilities"]
 description = "The vituss command-line tool: run a cluster, administer it, query it"
 
 [[bin]]

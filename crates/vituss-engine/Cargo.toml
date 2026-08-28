@@ -3,6 +3,9 @@ name = "vituss-engine"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+repository.workspace = true
+keywords = ["database", "sharding", "sql", "distributed"]
+categories = ["database", "database-implementations"]
 description = "Executes routing plans: fans out to shards and recombines the results"
 
 [dependencies]

@@ -3,6 +3,9 @@ name = "vituss-topo"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+repository.workspace = true
+keywords = ["database", "sharding", "topology", "distributed"]
+categories = ["database", "database-implementations"]
 description = "Cluster topology: keyspaces, shards, tablets and the serving graph, over a pluggable store"
 
 [dependencies]

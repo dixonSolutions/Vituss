@@ -3,6 +3,9 @@ name = "vituss-backend"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+repository.workspace = true
+keywords = ["database", "sql", "driver", "mysql", "postgres"]
+categories = ["database", "database-implementations"]
 description = "Pluggable database drivers: the layer that actually talks to MySQL, PostgreSQL, SQL Server or SQLite"
 
 [features]

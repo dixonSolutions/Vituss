@@ -70,6 +70,13 @@ pub fn session(keyspace: Option<String>) -> SessionRef {
 
 /// Print a result set as an aligned table, the way a SQL shell would.
 pub fn print_result(result: &QueryResult) {
+    // Printed first and for every result shape. A DDL produces no rows, and that
+    // is exactly the case where a warning about what could not be translated
+    // matters most.
+    for w in &result.warnings {
+        eprintln!("warning: {w}");
+    }
+
     if result.fields.is_empty() {
         println!(
             "OK, {} row(s) affected{}",
@@ -135,7 +142,4 @@ pub fn print_result(result: &QueryResult) {
     }
     println!("{rule}");
     println!("{} row(s)", rows.len());
-    for w in &result.warnings {
-        eprintln!("warning: {w}");
-    }
 }
