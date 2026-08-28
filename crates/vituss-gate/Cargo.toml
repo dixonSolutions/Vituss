@@ -1,0 +1,33 @@
+[package]
+name = "vituss-gate"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+keywords = ["database", "sharding", "sql", "proxy", "distributed"]
+categories = ["database", "database-implementations"]
+description = "The query gateway: plans, routes and executes client statements across shards"
+
+[dependencies]
+vituss-core.workspace = true
+vituss-dialect.workspace = true
+vituss-topo.workspace = true
+vituss-vschema.workspace = true
+vituss-vindex.workspace = true
+vituss-planner.workspace = true
+vituss-engine.workspace = true
+vituss-tablet.workspace = true
+vituss-backend.workspace = true
+async-trait.workspace = true
+tokio = { workspace = true }
+futures.workspace = true
+parking_lot.workspace = true
+tracing.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+rand.workspace = true
+sqlparser.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true }
+tempfile = "3"

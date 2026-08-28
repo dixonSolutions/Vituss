@@ -1,9 +1,0 @@
-[package]
-name = "sql-dialect-postgres"
-version.workspace = true
-edition.workspace = true
-license.workspace = true
-
-[dependencies]
-sql-ast = { workspace = true }
-pg_query = { workspace = true }

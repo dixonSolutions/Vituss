@@ -1,0 +1,39 @@
+[package]
+name = "vituss-backend"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+keywords = ["database", "sql", "driver", "mysql", "postgres"]
+categories = ["database", "database-implementations"]
+description = "Pluggable database drivers: the layer that actually talks to MySQL, PostgreSQL, SQL Server or SQLite"
+
+[features]
+default = ["sqlite"]
+sqlite = ["sqlx", "sqlx/sqlite"]
+mysql = ["sqlx", "sqlx/mysql"]
+postgres = ["sqlx", "sqlx/postgres"]
+mssql = ["dep:tiberius", "dep:tokio-util"]
+all-engines = ["sqlite", "mysql", "postgres", "mssql"]
+
+[dependencies]
+vituss-core.workspace = true
+vituss-dialect.workspace = true
+async-trait.workspace = true
+tokio = { workspace = true }
+tracing.workspace = true
+futures.workspace = true
+chrono.workspace = true
+rust_decimal.workspace = true
+uuid.workspace = true
+serde_json.workspace = true
+serde.workspace = true
+parking_lot.workspace = true
+once_cell.workspace = true
+
+sqlx = { workspace = true, optional = true }
+tiberius = { workspace = true, optional = true }
+tokio-util = { workspace = true, optional = true }
+
+[dev-dependencies]
+tokio = { workspace = true }

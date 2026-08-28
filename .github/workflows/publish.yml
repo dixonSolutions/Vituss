@@ -1,0 +1,116 @@
+name: Publish
+
+# A crates.io version is permanent — it can be yanked but never replaced or
+# deleted. So this runs on every push to main but publishes only when the
+# workspace version in Cargo.toml is one crates.io has not seen. Ordinary
+# commits to main find the version already published and stop at the gate;
+# to cut a release, bump [workspace.package] version and merge.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Package and verify everything, but do not publish"
+        type: boolean
+        default: true
+
+concurrency:
+  group: publish
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  gate:
+    name: Is this version new?
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.check.outputs.version }}
+      should_publish: ${{ steps.check.outputs.should_publish }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - id: check
+        name: Compare workspace version against crates.io
+        run: |
+          set -euo pipefail
+          version=$(sed -n '/^\[workspace\.package\]/,/^\[/{s/^version = "\(.*\)"/\1/p}' Cargo.toml | head -1)
+          if [ -z "$version" ]; then
+            echo "::error::could not read version from [workspace.package] in Cargo.toml"
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+          # The umbrella crate is the last one published, so if it is present at
+          # this version the whole workspace went out. A 404 means nothing has
+          # ever been published under this name.
+          body=$(curl -sS --retry 3 -H 'User-Agent: vituss-release (github actions)' \
+                   "https://crates.io/api/v1/crates/vituss/versions" || echo '')
+          if echo "$body" | grep -q "\"num\":\"$version\""; then
+            echo "vituss $version is already on crates.io — nothing to publish."
+            echo "should_publish=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "vituss $version is not on crates.io — this is a release."
+            echo "should_publish=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Summary
+        run: |
+          echo "### Version \`${{ steps.check.outputs.version }}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          if [ "${{ steps.check.outputs.should_publish }}" = "true" ]; then
+            echo "Not yet on crates.io — publishing." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "Already on crates.io — skipping publish." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+  test:
+    name: Test before release
+    needs: gate
+    if: needs.gate.outputs.should_publish == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test --workspace --locked
+      - run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+
+  publish:
+    name: cargo publish
+    needs: [gate, test]
+    if: needs.gate.outputs.should_publish == 'true'
+    runs-on: ubuntu-latest
+    environment: crates-io
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      # --workspace resolves the publish order from the dependency graph and
+      # waits for each crate to appear in the index before the next one that
+      # needs it. Doing it by hand is thirteen commands and a sleep.
+      - name: Dry run
+        run: cargo publish --workspace --locked --dry-run
+
+      - name: Publish
+        if: github.event_name == 'push' || inputs.dry_run == false
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: cargo publish --workspace --locked
+
+      - name: Tag the release
+        if: github.event_name == 'push' || inputs.dry_run == false
+        env:
+          VERSION: ${{ needs.gate.outputs.version }}
+        run: |
+          git config user.name  'github-actions[bot]'
+          git config user.email 'github-actions[bot]@users.noreply.github.com'
+          git tag -a "v$VERSION" -m "Vituss v$VERSION"
+          git push origin "v$VERSION"

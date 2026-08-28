@@ -1,0 +1,21 @@
+[package]
+name = "vituss-vschema"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+keywords = ["database", "sharding", "schema", "sql"]
+categories = ["database", "database-implementations"]
+description = "The logical schema: which tables live in which keyspace and how they are sharded"
+
+[dependencies]
+vituss-core.workspace = true
+vituss-vindex.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+serde_yaml.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true }

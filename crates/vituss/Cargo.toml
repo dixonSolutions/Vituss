@@ -1,0 +1,42 @@
+[package]
+name = "vituss"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+keywords = ["database", "sharding", "mysql", "postgres", "vitess"]
+categories = ["database", "command-line-utilities"]
+description = "The vituss command-line tool: run a cluster, administer it, query it"
+
+[[bin]]
+name = "vituss"
+path = "src/main.rs"
+
+[features]
+default = ["all-engines", "wire"]
+all-engines = ["vituss-backend/all-engines"]
+sqlite-only = ["vituss-backend/sqlite"]
+wire = ["dep:vituss-wire"]
+
+[dependencies]
+vituss-core.workspace = true
+vituss-dialect.workspace = true
+vituss-topo.workspace = true
+vituss-vschema.workspace = true
+vituss-vindex.workspace = true
+vituss-planner.workspace = true
+vituss-engine.workspace = true
+vituss-backend.workspace = true
+vituss-tablet.workspace = true
+vituss-gate.workspace = true
+vituss-ctl.workspace = true
+vituss-wire = { workspace = true, optional = true }
+
+clap.workspace = true
+tokio = { workspace = true }
+tracing.workspace = true
+tracing-subscriber.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+serde_yaml.workspace = true
+anyhow.workspace = true

@@ -1,0 +1,83 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+
+jobs:
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - uses: Swatinem/rust-cache@v2
+
+      # The suite needs no external services — every engine is exercised
+      # against SQLite or an in-process fake. See README "Development".
+      - name: Test
+        run: cargo test --workspace --locked
+
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+
+  features:
+    name: ${{ matrix.name }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Each engine must compile on its own: the point of the dialect layer
+          # is that you deploy only the drivers you actually use.
+          - { name: "backend: sqlite",  args: "-p vituss-backend --no-default-features --features sqlite" }
+          - { name: "backend: mysql",   args: "-p vituss-backend --no-default-features --features mysql" }
+          - { name: "backend: postgres", args: "-p vituss-backend --no-default-features --features postgres" }
+          - { name: "backend: mssql",   args: "-p vituss-backend --no-default-features --features mssql" }
+          - { name: "cli: sqlite-only", args: "-p vituss --no-default-features --features sqlite-only" }
+          - { name: "cli: no wire",     args: "-p vituss --no-default-features --features all-engines" }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Build ${{ matrix.name }}
+        run: cargo build --locked ${{ matrix.args }}
+
+  msrv:
+    name: MSRV (1.89)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.89
+      - uses: Swatinem/rust-cache@v2
+      - name: Check
+        run: cargo check --workspace --locked
+
+  package:
+    name: Package for crates.io
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      # Proves the whole workspace would publish cleanly, without publishing.
+      # A crates.io version is permanent, so this runs on every PR rather than
+      # being discovered during a release.
+      - name: cargo package --workspace
+        run: cargo package --workspace --locked

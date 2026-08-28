@@ -1,0 +1,23 @@
+[package]
+name = "vituss-tablet"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+keywords = ["database", "sharding", "sql", "connection-pool"]
+categories = ["database", "database-implementations"]
+description = "The shard-side server: owns one database, its connections, its transactions and its schema"
+
+[dependencies]
+vituss-core.workspace = true
+vituss-dialect.workspace = true
+vituss-backend.workspace = true
+vituss-topo.workspace = true
+async-trait.workspace = true
+tokio = { workspace = true }
+parking_lot.workspace = true
+tracing.workspace = true
+serde.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true }

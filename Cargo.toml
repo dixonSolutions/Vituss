@@ -1,29 +1,73 @@
 [workspace]
 resolver = "2"
-members = [
-    "crates/sql-ast",
-    "crates/sql-dialect-mysql",
-    "crates/sql-dialect-postgres",
-    "crates/sql-dialect-generic",
-    "crates/vtgate-core",
-    "crates/vtgate-cli",
-]
+members = ["crates/*"]
 
 [workspace.package]
 version = "0.1.0"
 edition = "2021"
+rust-version = "1.89"
 license = "Apache-2.0"
 repository = "https://github.com/dixonSolutions/Vituss"
+description = "Vituss - a database-agnostic sharding, routing and cluster-management layer (a Rust reimagining of Vitess)"
 
 [workspace.dependencies]
-sql-ast = { path = "crates/sql-ast" }
-sql-dialect-mysql = { path = "crates/sql-dialect-mysql" }
-sql-dialect-postgres = { path = "crates/sql-dialect-postgres" }
-sql-dialect-generic = { path = "crates/sql-dialect-generic" }
-vtgate-core = { path = "crates/vtgate-core" }
+# --- internal ---
+vituss-core     = { path = "crates/vituss-core",     version = "0.1.0" }
+vituss-dialect  = { path = "crates/vituss-dialect",  version = "0.1.0" }
+vituss-topo     = { path = "crates/vituss-topo",     version = "0.1.0" }
+vituss-vschema  = { path = "crates/vituss-vschema",  version = "0.1.0" }
+vituss-vindex   = { path = "crates/vituss-vindex",   version = "0.1.0" }
+vituss-backend  = { path = "crates/vituss-backend",  version = "0.1.0" }
+vituss-planner  = { path = "crates/vituss-planner",  version = "0.1.0" }
+vituss-engine   = { path = "crates/vituss-engine",   version = "0.1.0" }
+vituss-tablet   = { path = "crates/vituss-tablet",   version = "0.1.0" }
+vituss-gate     = { path = "crates/vituss-gate",     version = "0.1.0" }
+vituss-wire     = { path = "crates/vituss-wire",     version = "0.1.0" }
+vituss-ctl      = { path = "crates/vituss-ctl",      version = "0.1.0" }
 
-sqlparser = "0.52"
-pg_query = "6"
-thiserror = "1"
-anyhow = "1"
-clap = { version = "4", features = ["derive"] }
+# --- external ---
+anyhow       = "1"
+thiserror    = "2"
+async-trait  = "0.1"
+tokio        = { version = "1", features = ["full"] }
+tokio-stream = "0.1"
+futures      = "0.3"
+serde        = { version = "1", features = ["derive"] }
+serde_json   = "1"
+serde_yaml   = "0.9"
+tracing      = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+bytes        = "1"
+parking_lot  = "0.12"
+dashmap      = "6"
+rand         = "0.8"
+clap         = { version = "4", features = ["derive", "env"] }
+axum         = "0.8"
+hyper        = "1"
+chrono       = { version = "0.4", features = ["serde"] }
+rust_decimal = { version = "1", features = ["serde"] }
+uuid         = { version = "1", features = ["v4", "serde"] }
+hex          = "0.4"
+base64       = "0.22"
+md-5         = "0.10"
+sha2         = "0.10"
+xxhash-rust  = { version = "0.8", features = ["xxh64"] }
+crc32fast    = "1"
+itertools    = "0.14"
+once_cell    = "1"
+
+# SQL front-end: we deliberately do NOT hand-roll a parser.
+sqlparser    = { version = "0.62", features = ["visitor"] }
+
+# Backend drivers (feature-gated inside vituss-backend)
+sqlx         = { version = "0.8", default-features = false, features = ["runtime-tokio", "macros", "chrono", "uuid", "rust_decimal", "json"] }
+tiberius     = { version = "0.12", default-features = false, features = ["tds73", "chrono", "rust_decimal"] }
+tokio-util   = { version = "0.7", features = ["compat"] }
+
+# Wire protocol front-ends (feature-gated inside vituss-wire)
+opensrv-mysql = "0.7"
+pgwire        = "0.40"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1

@@ -1,177 +1,234 @@
-# Vitess-in-Rust: architecture and scope
+# Architecture
 
-## What this is
+Vituss is a router, not a database. Everything below follows from that.
 
-A **design document and a running skeleton**, not a Vitess replacement.
-Vitess (https://vitess.io) is a large, mature Go system: VTGate (query
-routing/planning), VTTablet (per-shard proxy + query rewriting), VTOrc
-(replication management), a topology service, an online-DDL engine, and
-its own hand-written `sqlparser` for MySQL's grammar. Rewriting all of
-that in Rust, correctly, is a multi-year, multi-person effort — not
-something to attempt speculatively in one session. What's here instead:
-
-- A real architectural boundary between **dialect-specific SQL parsing**
-  and the **dialect-agnostic command/routing layer**, proven out with
-  three actually-different parser backends (MySQL and ANSI/generic via
-  `sqlparser-rs`, PostgreSQL via `pg_query` which wraps the real
-  PostgreSQL grammar).
-- A minimal, compiling, runnable Cargo workspace that demonstrates the
-  seam: `sql-ast` (the trait boundary) → dialect crates (parser
-  backends) → `vtgate-core` (routing stub) → `vtgate-cli` (demo binary).
-- An honest list of what a real system needs next, and where it plugs in.
-
-## Why "one AST for all dialects" is the wrong goal
-
-The instinct is to define a single SQL AST and have every dialect parser
-translate into it, the way Vitess's own `sqlparser` package defines one
-MySQL-flavored AST. That works *because* Vitess only supports MySQL. The
-moment you add PostgreSQL, the premise breaks down:
-
-- PostgreSQL's real grammar (what `pg_query`/`libpg_query` implements) has
-  constructs with no MySQL equivalent (e.g. `RETURNING`, native array
-  types, `LATERAL`, window frame variations, its own DDL surface) and
-  disagrees with MySQL on things as basic as identifier quoting and upsert
-  syntax.
-- A hand-rolled "superset" grammar drifts from what any real engine
-  actually accepts, and every new dialect added means renegotiating the
-  shared AST's shape — which is exactly the maintenance trap this
-  project should avoid.
-- Existing high-quality dialect parsers already disagree on AST
-  representation: `sqlparser-rs`'s `Statement` enum vs. `pg_query`'s
-  protobuf tree (a direct mirror of Postgres's own internal parse nodes)
-  are not reconcilable without a lossy translation layer, maintained
-  forever, for every dialect added.
-
-## The actual boundary: two small traits
-
-`sql-ast` (crate) defines the contract every dialect plugs into:
-
-```rust
-trait SqlDialectParser: Send + Sync {
-    fn name(&self) -> &'static str;
-    fn parse(&self, sql: &str) -> Result<ParsedStatement, ParseError>;
-    fn parse_batch(&self, sql: &str) -> Result<Vec<ParsedStatement>, ParseError>;
-}
-
-trait StatementInfo {
-    fn kind(&self) -> StatementKind;      // Select/Insert/Update/Delete/Ddl/...
-    fn tables(&self) -> Vec<TableRef>;    // what the command layer needs to route
-    fn to_sql(&self) -> String;           // push the statement down unchanged
-}
-```
-
-- **`SqlDialectParser`** is implemented once per dialect. It owns parsing
-  and keeps the dialect's *native* AST fully intact internally — no
-  translation happens here.
-- **`StatementInfo`** is implemented once per dialect's parsed-statement
-  wrapper. It answers only the questions the command/routing layer
-  actually needs. This is deliberately small: statement kind (for
-  read/write splitting), tables touched (for vindex/shard resolution),
-  and a way to get SQL text back out (for pushing the statement down to
-  a tablet, since VTGate/VTTablet-style architectures forward SQL text,
-  not a rewritten AST, to the underlying engine in the common case).
-
-`vtgate-core`, the command/routing layer, is written **only** against
-these two traits. It never imports `sql-dialect-mysql`,
-`sql-dialect-postgres`, or any other dialect crate — those are wired in
-by whichever binary assembles the system (`vtgate-cli` here; a real
-server binary in a full implementation). New dialects — SQLite, T-SQL,
-Snowflake, whatever — plug in by adding a crate that implements these two
-traits. Nothing in `vtgate-core` changes.
-
-This mirrors how Vitess itself is layered (VTGate is protocol/topology
-generic; VTTablet's `TabletType`/query-service abstraction is generic
-over the backing MySQL instance) — just moving the dialect seam one level
-higher, from "MySQL vs. no other option" to "any dialect with a
-`SqlDialectParser` impl."
-
-## Workspace layout
+## The path of a query
 
 ```
-crates/
-  sql-ast/               the trait boundary (this doc's core contribution)
-  sql-dialect-mysql/      MySQL grammar, via sqlparser-rs's MySqlDialect
-  sql-dialect-postgres/   real PostgreSQL grammar, via pg_query (libpg_query)
-  sql-dialect-generic/    ANSI/generic fallback, via sqlparser-rs's GenericDialect
-  vtgate-core/            dialect-agnostic registry + stub router
-  vtgate-cli/             demo binary wiring all three dialects into the router
+  client statement
+        │
+   1.   ├─ vituss-wire      protocol decode; session chatter answered here
+        │
+   2.   ├─ vituss-gate      is this SET/@@variable? if so, answer and stop
+        │
+   3.   ├─ vituss-dialect   parse with the *client's* grammar
+        │
+   4.   ├─ vituss-planner   VSchema + predicates → a Plan. No data is touched.
+        │
+   5.   ├─ vituss-engine    walk the plan
+        │                     ├─ vituss-vindex   values → keyspace IDs
+        │                     ├─ vituss-gate     keyspace IDs → shard names
+        │                     ├─ vituss-dialect  render per shard's engine
+        │                     ├─ vituss-tablet   execute
+        │                     └─ combine         merge / aggregate / limit
+        │
+   6.   └─ vituss-wire      encode for the client's protocol
 ```
 
-Try it:
+Steps 3 and 5 are the ones that make engine independence work, and they are
+deliberately separate. The statement is parsed **once**, with the grammar of the
+engine the *client* speaks; it is rendered **per shard**, for the engine that
+shard runs. A MySQL client's backtick-quoted identifiers become double quotes on
+a PostgreSQL shard and brackets on a SQL Server one, and its `?` placeholders
+become `$1` or `@p1`, because rendering is a translation rather than a
+`to_string()`.
+
+## Crates
+
+| Crate | Responsibility |
+|---|---|
+| `vituss-core` | Values, result sets, key ranges, destinations, sessions, errors. Knows nothing about any engine. |
+| `vituss-dialect` | The `SqlDialect` plug-in: grammar, quoting, placeholders, capabilities, introspection SQL, error mapping, transaction control. |
+| `vituss-backend` | The `Backend`/`Connection` plug-in: drivers. `sqlx` for MySQL / PostgreSQL / SQLite, `tiberius` for SQL Server, plus a programmable fake for tests. |
+| `vituss-topo` | Cluster metadata over a pluggable `TopoStore` (memory, files, room for etcd). Keyspaces, shards, tablets, the serving graph, locks, watches. |
+| `vituss-vschema` | The logical schema: which tables live where and how they are sharded. Validates itself at load, not at query time. |
+| `vituss-vindex` | The `Vindex` plug-in: sharding functions. Bit-compatible with Vitess's. |
+| `vituss-planner` | Statement → `Plan`. Pure: no I/O, no data, cacheable. |
+| `vituss-engine` | Executes a plan through the `ShardGateway` trait. Fan-out, merge-sort, aggregation, joins, limits. |
+| `vituss-tablet` | The shard-side server: one database, its pool, its open transactions, its schema, its health. |
+| `vituss-gate` | The gateway: sessions, discovery, resolution, transaction coordination. Stateless and replaceable. |
+| `vituss-wire` | MySQL and PostgreSQL protocol servers. |
+| `vituss-ctl` | Declarative cluster config and administrative operations. |
+| `vituss-cli` | The `vituss` binary. |
+
+Dependencies point one way: `core → dialect → vindex/vschema → planner → engine
+→ gate → wire`. No cycles, and no crate below the planner knows a cluster exists.
+
+## Types
+
+Routing a `SELECT` between engines is syntax. Routing a `CREATE TABLE` is *type
+systems*, which disagree about much more.
+
+A column type is decomposed into a neutral form — a base `SqlType` plus length,
+precision, unsignedness and whether the engine generates the value — and
+re-rendered by the target dialect:
+
+| written as | PostgreSQL gets | SQL Server gets | SQLite gets |
+|---|---|---|---|
+| `BIGINT UNSIGNED AUTO_INCREMENT` | `BIGSERIAL` | `BIGINT IDENTITY(1,1)` | `INTEGER` |
+| `INT UNSIGNED` | `BIGINT` | `BIGINT` | `INTEGER` |
+| `VARCHAR(128)` | `VARCHAR(128)` | `NVARCHAR(128)` | `TEXT` |
+| `TEXT` | `TEXT` | `NVARCHAR(MAX)` | `TEXT` |
+| `JSON` | `JSONB` | `NVARCHAR(MAX)` | `TEXT` |
+| `BLOB` | `BYTEA` | `VARBINARY(MAX)` | `BLOB` |
+| `DATETIME` | `TIMESTAMP` | `DATETIME2` | `DATETIME` |
+| PostgreSQL `UUID` | `UUID` | `UNIQUEIDENTIFIER` | `TEXT` |
+
+Three rules make this safe rather than merely convenient:
+
+- **Widen, never truncate.** An unsigned 32-bit column becomes `BIGINT` on an
+  engine without unsigned types, because the alternative silently loses the top
+  half of its range. An unsigned 64-bit one becomes `NUMERIC(20)`.
+- **A generated key drops its unsignedness.** It counts up from 1, so the range
+  was never the point, and keeping it would force a decimal type on three of the
+  four engines.
+- **Say what was lost.** A `CHARACTER SET`, an `ON UPDATE CURRENT_TIMESTAMP`, a
+  MySQL `ENGINE=` clause — dropped, and reported as a warning on the result. The
+  person running the DDL is the one who can judge whether it mattered.
+
+A type nothing else has — a PostgreSQL `inet`, an array, an enum — is passed
+through untouched with a warning. Guessing would be worse.
+
+The same decomposition drives the *value* path: every driver encodes and decodes
+through the neutral `Value` enum, so a `NUMERIC` read from PostgreSQL and a
+`DECIMAL` read from MySQL arrive at the planner as the same thing.
+
+## Sharding
+
+A **keyspace** is one logical database. A **shard** owns a half-open range of
+byte strings, and is named after it: `-80`, `80-c0`, `c0-`. A **vindex** maps
+column values to a *keyspace ID* — an opaque byte string — and the keyspace ID
+falls in exactly one shard's range.
 
 ```
-cargo run -p vtgate-cli -- --dialect mysql    "SELECT id FROM users WHERE id = 5"
-cargo run -p vtgate-cli -- --dialect postgres "SELECT id FROM users WHERE id = 5"
-cargo run -p vtgate-cli -- --dialect generic --shards shard-0 \
-    "INSERT INTO users (id, name) VALUES (1, 'a')"
+   vindex("user_id" = 4)  →  keyspace id 0xd2fd8867d50d2dfe
+                                     │
+   shards:  [ -40 ] [ 40-80 ] [ 80-c0 ] [ c0-  ]
+                                            ▲
+                                       this one
 ```
 
-Note `sql-dialect-mysql` and `sql-dialect-generic` share their
-`StatementInfo` implementation (`classify`/`extract_tables` in the
-generic crate) because both happen to parse into `sqlparser-rs`'s AST —
-that's an implementation convenience between two crates that chose the
-same backend, not a requirement the trait imposes. `sql-dialect-postgres`
-implements `StatementInfo` completely independently, directly over
-`pg_query`'s protobuf tree, which is the case that actually proves the
-boundary holds.
+Because the mapping is arithmetic on bytes, it is identical whichever engine
+stores the row. That is why a keyspace can be migrated between engines without
+re-sharding, and why the same layout works over four engines that agree on
+almost nothing else.
 
-## What existing crates this leans on, and why
+Splitting a shard is a metadata operation: `-80` becomes `-40` and `40-80`, and
+every keyspace ID keeps the same value. (Moving the *rows* is VReplication's job
+and is not implemented yet — see the README's gap list.)
 
-Per the "use existing crates, don't hand-roll grammars" decision:
+## Planning
 
-- **`sqlparser-rs`** — actively maintained, dialect-parameterized SQL
-  parser used in production by DataFusion, GreptimeDB, and others.
-  Covers MySQL, Postgres-flavored, ANSI, Snowflake, BigQuery, Hive,
-  ClickHouse, and more dialects out of the box — each new
-  `sql-dialect-*` crate for one of those dialects is mostly plumbing.
-- **`pg_query` (pg_query.rs)** — wraps `libpg_query`, which is extracted
-  directly from the PostgreSQL server source. This is the real grammar,
-  not a reimplementation, so Postgres compatibility is bounded by
-  PostgreSQL's own release cadence rather than by parser maintainer
-  effort.
+The planner's job is to push as much work into the shards as possible.
 
-This intentionally avoids what Vitess's own `sqlparser` package does
-(hand-maintain a grammar via goyacc), which is exactly the kind of
-per-dialect maintenance burden pluggable dialects via mature upstream
-crates are meant to sidestep.
+A query that provably reaches **one shard** is sent verbatim, with nothing added
+above it. The shard's own optimiser handles the joins, the sort, the aggregate
+and the limit — all of which it does better than a router could, because it has
+the indexes and the statistics.
 
-## What a real implementation still needs
+A query that spans shards gets exactly the primitives it needs and no more:
 
-Ordered roughly by how soon it'd block real use, not by difficulty:
+```
+  SELECT country, COUNT(*) FROM user GROUP BY country     -- scattered
 
-1. **A real vschema and planner.** `vtgate-core::Router` today has no
-   concept of keyspaces, shards, or vindexes — it either targets one
-   configured shard list or refuses multi-shard writes outright. Vitess's
-   actual planner (`go/vt/vtgate/planbuilder`) resolves routing from
-   table/column predicates against defined vindexes (hash, lookup,
-   consistent-lookup, ...); that's a substantial component on its own,
-   and it's dialect-specific in ways `StatementInfo` doesn't yet expose
-   (e.g. WHERE-clause predicate extraction per vindex column).
-2. **Per-dialect predicate/expression extraction.** `StatementInfo::tables()`
-   is enough to know *what's touched*; real routing needs *which column
-   values* pin a row to a shard, which means walking each dialect's
-   expression tree — necessarily dialect-specific work living inside
-   each `sql-dialect-*` crate, exposed through an extended `StatementInfo`.
-3. **A topology service equivalent.** Vitess's topology (etcd/ZooKeeper/
-   Consul-backed) tracks live tablets, shard ownership, and serving
-   graphs. Nothing here talks to one yet.
-4. **A tablet-side proxy.** Vitess's VTTablet does connection pooling,
-   query rewriting for its own MySQL-specific rules, replication-aware
-   read routing, and online DDL. None of that exists here; `to_sql()` is
-   as far as this skeleton goes toward "send the query somewhere."
-5. **Wire protocol servers.** MySQL and PostgreSQL wire protocols are
-   different enough (auth handshake, prepared-statement binary formats,
-   COPY protocol for Postgres) that "one server, N dialects" likely means
-   one wire-protocol crate per frontend protocol, still funneling into
-   the same `vtgate-core` router. `vtgate-cli` here has no listener at
-   all — it's a one-shot CLI over the router, not a server.
-6. **Correctness/compatibility testing against real engines.** Any of
-   this claiming MySQL or Postgres compatibility needs to be validated
-   against the databases themselves (e.g. running each engine's own SQL
-   logic test suite through the relevant dialect crate), not just
-   "compiles and parses example queries."
+  Truncate to 1 column          ← drops the helper columns the planner added
+    Aggregate [CountStar] group_by=[0] ordered=true
+      Route(Scatter) keyspace=commerce
+        query: SELECT country, COUNT(*) FROM user GROUP BY country ORDER BY country
+        merge-sort on [0]
+```
 
-None of this is a reason not to start — it's the reason the first
-deliverable is the trait boundary and a skeleton proving it holds against
-two structurally different parsers, rather than a half-built router with
-no clear seam for what comes next.
+Note what was pushed down: the `GROUP BY` and the `COUNT` run on every shard, and
+so does an `ORDER BY` the user never wrote — added so the gate's aggregate can
+*stream* over sorted input instead of buffering every row.
+
+Three rewrites are worth knowing about, because they are where naive routing goes
+wrong:
+
+- **`AVG` is split into `SUM` and `COUNT`.** The mean of per-shard means is not
+  the mean unless the shards happen to be evenly filled.
+- **`LIMIT n OFFSET m` is widened to `LIMIT n+m` on each shard**, then applied
+  again at the gate. Any single shard could hold all of the top *n*.
+- **Sort and group keys missing from the projection are added**, then trimmed
+  after merging. The gate cannot merge on a column the shards did not return.
+
+And one refusal: `COUNT(DISTINCT x)` across shards is rejected with a reason,
+because per-shard distinct counts cannot be added. Routed to one shard, it works
+fine.
+
+### Joins
+
+Two tables sharded by the same vindex on the columns being joined are
+*collocated*: matching rows are, by construction, on the same shard. The whole
+join is pushed down and the gate only concatenates.
+
+```
+  SELECT u.name, o.price FROM user u JOIN corder o ON u.user_id = o.user_id
+
+  Route(Scatter)              ← one primitive; each shard joins its own rows
+```
+
+When they are not collocated, the gate runs a nested loop: the left side, then
+the right side once per left row with values bound in. Correct, and O(left) round
+trips — which is why the planner works so hard to avoid it, and why the VSchema
+lets you shard `corder` by `user_id` rather than by `order_id`.
+
+## Transactions
+
+Session state, including the open per-shard transactions, travels with each
+request rather than living in the gate. Gates are therefore interchangeable.
+
+Three modes:
+
+- **`single`** — reject anything that would touch a second shard. Strictest, and
+  the right default for workloads that can be designed for it.
+- **`multi`** (default) — commit shards one at a time. Not atomic; if a later
+  shard fails, the error says exactly which shards had already committed.
+- **`two_pc`** — the engines' own distributed commit: XA on MySQL,
+  `PREPARE TRANSACTION` on PostgreSQL. Refused when any participant cannot do it,
+  and refused when participants disagree on the protocol — bridging XA and
+  prepared transactions has no recovery story.
+
+Reads inside a transaction are routed to the primary, so a client sees its own
+uncommitted writes.
+
+## Lookup vindexes
+
+A lookup vindex routes on a column that is *not* the sharding key, by keeping the
+mapping in a table:
+
+```
+  SELECT * FROM user WHERE email = 'ada@example.com'
+
+  1. email → keyspace_id      via a query against the lookup table
+  2. keyspace_id → shard      via the serving graph
+  3. the real query           to that one shard
+```
+
+The lookup table is itself a Vituss table, so it can be sharded and can live on a
+different engine. Its query goes back through the planner via the `VCursor`
+trait.
+
+When a table *owns* a lookup vindex, Vituss maintains it: inserts write the
+lookup row first (so a duplicate is caught before anything else happens), and
+deletes remove it after (so a rolled-back delete does not lose the mapping).
+
+While a lookup vindex is being backfilled it is marked `write_only`, and routing
+through it **scatters** rather than trusting an incomplete table. A wrong answer
+that looks right is the failure mode worth engineering against.
+
+## Failure behaviour
+
+The recurring principle: prefer a loud failure to a plausible wrong answer.
+
+- A serving graph with a gap or an overlap is refused at rebuild time, not
+  discovered as a "no shard for keyspace id" error at 3am.
+- A DDL that fails part-way through a keyspace reports which shards already
+  applied it, and stops rather than continuing.
+- A sum that would overflow `i64` widens to a decimal rather than wrapping.
+- An unknown vindex parameter is an error, not a warning — a typo in a vindex
+  param silently changes how data is sharded.
+- A replica lagging beyond the threshold is taken out of rotation; stale data
+  returned as fresh is worse than an error.
+- Passwords never appear in a DSN that reaches a log, and `${VAR}` references in
+  a DSN are expanded at connect time so the topology can be committed to git.

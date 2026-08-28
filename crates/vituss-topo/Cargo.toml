@@ -1,0 +1,25 @@
+[package]
+name = "vituss-topo"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+keywords = ["database", "sharding", "topology", "distributed"]
+categories = ["database", "database-implementations"]
+description = "Cluster topology: keyspaces, shards, tablets and the serving graph, over a pluggable store"
+
+[dependencies]
+vituss-core.workspace = true
+async-trait.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+serde_yaml.workspace = true
+tokio = { workspace = true }
+tokio-stream.workspace = true
+parking_lot.workspace = true
+tracing.workspace = true
+uuid.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+tempfile = "3"

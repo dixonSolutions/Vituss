@@ -1,0 +1,17 @@
+[package]
+name = "vituss-dialect"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+keywords = ["sql", "database", "mysql", "postgres", "sqlserver"]
+categories = ["database", "database-implementations"]
+description = "Pluggable SQL dialect layer: parsing, rendering and capability description per engine"
+
+[dependencies]
+vituss-core.workspace = true
+sqlparser.workspace = true
+thiserror.workspace = true
+serde.workspace = true
+once_cell.workspace = true
+tracing.workspace = true

@@ -1,9 +1,0 @@
-[package]
-name = "sql-dialect-generic"
-version.workspace = true
-edition.workspace = true
-license.workspace = true
-
-[dependencies]
-sql-ast = { workspace = true }
-sqlparser = { workspace = true }
