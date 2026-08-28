@@ -5,3 +5,8 @@
 *.db
 *.db-shm
 *.db-wal
+
+# Local secrets — never commit
+.env
+.env.*
+!.env.example

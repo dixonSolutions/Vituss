@@ -1,30 +1,46 @@
 # Publishing to crates.io
 
-Vituss is not published yet. Everything needed to publish is in place — each
-crate has a description, licence, keywords, categories and a version on its
-internal dependencies — so it is a decision, not a task.
-
-## Before the first publish
-
-**Set the real repository URL.** `Cargo.toml` currently says
-`https://github.com/kingspan/vituss`, which was a placeholder. crates.io shows it
-on every crate page and `cargo` warns without it.
-
-```toml
-[workspace.package]
-repository = "https://github.com/<your-org>/vituss"
-```
+Vituss is not published yet, but the pipeline that would publish it is in
+place. Each crate has a description, licence, keywords, categories and a version
+on its internal dependencies, and `.github/workflows/publish.yml` does the
+release. What is left is a decision, not a task.
 
 **The names are free.** `vituss`, `vituss-core` and the rest were unclaimed on
 crates.io at the time of writing. Publishing `vituss` reserves the prefix in
 practice, since crates.io blocks confusingly similar names.
 
-## Order matters
+## How a release happens
 
-crates.io verifies that every dependency already exists, so the workspace has to
-go out in dependency order. One failure part-way leaves the earlier crates
-published and irreversible — versions cannot be re-used, only yanked — so do a
-dry run of the whole sequence first.
+`publish.yml` runs on every push to `main` and gates on one question: is the
+version in `[workspace.package]` already on crates.io? Almost always it is, and
+the run stops at the gate having done nothing. So:
+
+1. Bump `version` in the root `Cargo.toml` and run `cargo update --workspace`
+   so `Cargo.lock` agrees.
+2. Merge to `main`.
+3. The gate sees a version crates.io has not got, the full test suite runs, then
+   `cargo publish --workspace` goes out and the commit is tagged `v<version>`.
+
+The token lives in the `CARGO_REGISTRY_TOKEN` repository secret and is read only
+by the `publish` job, which runs in the `crates-io` environment — add a required
+reviewer there if you want a human between a version bump and a permanent
+release.
+
+Nothing about this is undoable. A crates.io version can be yanked but never
+replaced or deleted, and the name is claimed forever the first time it goes out.
+The gate exists so that an ordinary commit to `main` cannot trigger a release;
+it does not make the release itself reversible.
+
+## Doing it by hand instead
+
+If you would rather not go through CI, order matters — crates.io verifies that
+every dependency already exists, so the workspace has to go out in dependency
+order. One failure part-way leaves the earlier crates published and
+irreversible, so do a dry run of the whole sequence first.
+
+Since Cargo 1.90, `cargo publish --workspace` works out that order itself and
+waits for the index between crates; that is what the workflow runs. The
+explicit sequence below is the fallback.
 
 ```bash
 # Verify every crate packages and builds in isolation.
