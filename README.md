@@ -225,7 +225,7 @@ does not move a single row.
 ## Development
 
 ```bash
-cargo test --workspace          # 155 tests, no external services needed
+cargo test --workspace          # 164 tests, no external services needed
 cargo build --release
 ```
 
@@ -245,8 +245,13 @@ To build with only the engines you need:
 cargo build --no-default-features --features sqlite-only -p vituss
 ```
 
-Not on crates.io yet — see [docs/PUBLISHING.md](docs/PUBLISHING.md) for what that
-would take and whether it is worth doing.
+Published on crates.io as of 0.1.0:
+
+```bash
+cargo install vituss                # the binary, all four engines
+```
+
+See [docs/PUBLISHING.md](docs/PUBLISHING.md) for how releases are cut.
 
 ## Licence
 

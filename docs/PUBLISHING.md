@@ -1,13 +1,17 @@
 # Publishing to crates.io
 
-Vituss is not published yet, but the pipeline that would publish it is in
-place. Each crate has a description, licence, keywords, categories and a version
-on its internal dependencies, and `.github/workflows/publish.yml` does the
-release. What is left is a decision, not a task.
+Vituss is on crates.io as of 0.1.0 — all thirteen crates, published together.
+`.github/workflows/publish.yml` handles releases from here.
 
-**The names are free.** `vituss`, `vituss-core` and the rest were unclaimed on
-crates.io at the time of writing. Publishing `vituss` reserves the prefix in
-practice, since crates.io blocks confusingly similar names.
+Two things caught the first attempt out, both worth knowing before a release
+from a fresh machine or a fresh account:
+
+- **crates.io needs a verified email on the account.** Not just set, verified.
+  Without it every upload is rejected with a 400 before any bytes move.
+- **New crate names are rate limited**, roughly one per ten minutes once the
+  initial burst is spent. Publishing thirteen new names took about an hour of
+  waiting. This only bites the first release; subsequent versions of an existing
+  crate are not affected.
 
 ## How a release happens
 
@@ -22,9 +26,10 @@ the run stops at the gate having done nothing. So:
    `cargo publish --workspace` goes out and the commit is tagged `v<version>`.
 
 The token lives in the `CARGO_REGISTRY_TOKEN` repository secret and is read only
-by the `publish` job, which runs in the `crates-io` environment — add a required
-reviewer there if you want a human between a version bump and a permanent
-release.
+by the `publish` job, which runs in the `crates-io` environment. That environment
+currently has no protection rules, so a version bump merged to `main` releases
+without asking. Adding a required reviewer there puts a human back in front of
+the irreversible step without touching the workflow.
 
 Nothing about this is undoable. A crates.io version can be yanked but never
 replaced or deleted, and the name is claimed forever the first time it goes out.

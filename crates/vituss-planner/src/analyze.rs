@@ -59,9 +59,22 @@ pub fn constraints_for(where_clause: Option<&Expr>, qualifiers: &[String]) -> Co
     };
 
     let mut out = Constraints::default();
+    let mut row_alternatives: Option<Vec<HashMap<String, Constraint>>> = None;
     for term in and_terms(expr) {
         if let Some((col, c)) = constraint_from(term, qualifiers) {
             merge(&mut out.by_column, col, c);
+            continue;
+        }
+        if let Some(mut sets) = row_constraints_from(term, qualifiers) {
+            if sets.len() == 1 {
+                // One tuple pins every column, which is as good as writing the
+                // equalities out by hand.
+                for (col, c) in sets.remove(0) {
+                    merge(&mut out.by_column, col, c);
+                }
+            } else if row_alternatives.is_none() {
+                row_alternatives = Some(sets);
+            }
         }
     }
 
@@ -92,6 +105,12 @@ pub fn constraints_for(where_clause: Option<&Expr>, qualifiers: &[String]) -> Co
         }
     }
 
+    if out.alternatives.is_empty() {
+        if let Some(sets) = row_alternatives {
+            out.alternatives = sets;
+        }
+    }
+
     out
 }
 
@@ -114,14 +133,28 @@ fn merge(map: &mut HashMap<String, Constraint>, column: String, c: Constraint) {
     }
 }
 
-fn constraint_from(expr: &Expr, qualifiers: &[String]) -> Option<(String, Constraint)> {
-    let matches_table = |qual: &Option<String>| match qual {
-        // Unqualified: assume it belongs to the table being considered. Safe
-        // because the caller only asks about one table at a time, and a genuinely
-        // ambiguous column would have been rejected by the engine anyway.
+/// Does this column's qualifier refer to the table being routed?
+///
+/// Unqualified: assume it belongs to the table being considered. Safe because the
+/// caller only asks about one table at a time, and a genuinely ambiguous column
+/// would have been rejected by the engine anyway.
+fn qualifier_matches(qual: &Option<String>, qualifiers: &[String]) -> bool {
+    match qual {
         None => true,
         Some(q) => qualifiers.iter().any(|a| a.eq_ignore_ascii_case(q)),
-    };
+    }
+}
+
+/// Look through redundant parentheses.
+fn strip_nested(e: &Expr) -> &Expr {
+    match e {
+        Expr::Nested(inner) => strip_nested(inner),
+        other => other,
+    }
+}
+
+fn constraint_from(expr: &Expr, qualifiers: &[String]) -> Option<(String, Constraint)> {
+    let matches_table = |qual: &Option<String>| qualifier_matches(qual, qualifiers);
 
     match expr {
         Expr::BinaryOp { left, op, right } => {
@@ -185,9 +218,70 @@ fn constraint_from(expr: &Expr, qualifiers: &[String]) -> Option<(String, Constr
                 Constraint::Prefix(RouteValue::Literal(vituss_core::Value::Text(prefix))),
             ))
         }
+        // PostgreSQL drivers routinely send an IN list as `= ANY(ARRAY[...])`;
+        // it is the same predicate and has to route the same way. Without this
+        // the identical logical query scatters for a PostgreSQL client and
+        // routes to one shard for a MySQL one, which is exactly the sort of
+        // per-engine difference the dialect layer exists to remove.
+        Expr::AnyOp { left, compare_op: BinaryOperator::Eq, right, .. } => {
+            let (qual, column) = as_column_ref(left)?;
+            if !matches_table(&qual) {
+                return None;
+            }
+            let Expr::Array(array) = strip_nested(right) else { return None };
+            // An empty ARRAY[] matches no rows; leave it to scatter rather than
+            // inventing a route to nowhere.
+            if array.elem.is_empty() {
+                return None;
+            }
+            let values: Vec<RouteValue> =
+                array.elem.iter().map(expr_to_route_value).collect::<Option<_>>()?;
+            Some((column.to_lowercase(), Constraint::In(values)))
+        }
         Expr::Nested(inner) => constraint_from(inner, qualifiers),
         _ => None,
     }
+}
+
+/// `(a, b) IN ((1, 2), (3, 4))` — a row-value list, which is the natural way to
+/// query a multi-column vindex, and which `constraint_from` cannot express
+/// because it pins several columns at once rather than one.
+///
+/// Returns one constraint set per tuple: a single tuple pins every column
+/// outright, and several tuples are alternatives whose destinations are unioned.
+fn row_constraints_from(
+    expr: &Expr,
+    qualifiers: &[String],
+) -> Option<Vec<HashMap<String, Constraint>>> {
+    let Expr::InList { expr: lhs, list, negated: false } = expr else { return None };
+    let Expr::Tuple(cols) = strip_nested(lhs) else { return None };
+    if cols.is_empty() || list.is_empty() {
+        return None;
+    }
+
+    let mut names = Vec::with_capacity(cols.len());
+    for c in cols {
+        let (qual, name) = as_column_ref(c)?;
+        if !qualifier_matches(&qual, qualifiers) {
+            return None;
+        }
+        names.push(name.to_lowercase());
+    }
+
+    let mut sets = Vec::with_capacity(list.len());
+    for entry in list {
+        let Expr::Tuple(values) = strip_nested(entry) else { return None };
+        // A row-value list of uneven arity is not something to guess about.
+        if values.len() != names.len() {
+            return None;
+        }
+        let mut set = HashMap::with_capacity(names.len());
+        for (name, v) in names.iter().zip(values) {
+            set.insert(name.clone(), Constraint::Equal(expr_to_route_value(v)?));
+        }
+        sets.push(set);
+    }
+    Some(sets)
 }
 
 fn flip(op: BinaryOperator) -> BinaryOperator {
@@ -300,6 +394,24 @@ fn routing_for_vindex(cv: &ColumnVindex, constraints: &Constraints) -> Option<Ro
                 values: vec![RouteValue::Tuple(prefix)],
             });
         }
+    }
+
+    // Several alternatives that each pin every column of a composite vindex —
+    // `(a, b) IN ((1, 2), (3, 4))`, or an OR of the same — reach one shard per
+    // alternative, which still beats asking all of them.
+    if ncols > 1 && !constraints.alternatives.is_empty() {
+        let mut values = Vec::with_capacity(constraints.alternatives.len());
+        for alt in &constraints.alternatives {
+            let mut tuple = Vec::with_capacity(ncols);
+            for c in &cv.columns {
+                match alt.get(&c.to_lowercase()) {
+                    Some(Constraint::Equal(v)) => tuple.push(v.clone()),
+                    _ => return None,
+                }
+            }
+            values.push(RouteValue::Tuple(tuple));
+        }
+        return Some(Routing { opcode: RouteOpcode::MultiEqual, vindex: Some(cv.clone()), values });
     }
 
     if ncols != 1 {
