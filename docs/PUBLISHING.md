@@ -15,15 +15,25 @@ from a fresh machine or a fresh account:
 
 ## How a release happens
 
-`publish.yml` runs on every push to `main` and gates on one question: is the
-version in `[workspace.package]` already on crates.io? Almost always it is, and
-the run stops at the gate having done nothing. So:
+`publish.yml` runs on every push to `main` and hands the decision to
+`scripts/publish-workspace.sh`, which asks crates.io which crates are already at
+their current version and publishes only the remainder. An ordinary commit finds
+everything already there and does nothing. So:
 
 1. Bump `version` in the root `Cargo.toml` and run `cargo update --workspace`
    so `Cargo.lock` agrees.
 2. Merge to `main`.
-3. The gate sees a version crates.io has not got, the full test suite runs, then
-   `cargo publish --workspace` goes out and the commit is tagged `v<version>`.
+3. The tests run, the script publishes every crate in dependency order, and the
+   commit is tagged `v<version>`.
+
+Do not replace that script with `cargo publish --workspace`. It aborts on the
+first crate whose version is already published, which means it cannot resume a
+release that stopped partway — and a first release *will* stop partway, because
+crates.io rate limits new crate names. `cargo publish --dry-run` does not consult
+the registry for existing versions either, so it cannot warn you about it. Both
+of those were found the hard way publishing 0.1.0. The script is idempotent:
+running it twice is harmless, and it is the supported way to finish an
+interrupted release.
 
 The token lives in the `CARGO_REGISTRY_TOKEN` repository secret and is read only
 by the `publish` job, which runs in the `crates-io` environment. That environment
@@ -33,8 +43,8 @@ the irreversible step without touching the workflow.
 
 Nothing about this is undoable. A crates.io version can be yanked but never
 replaced or deleted, and the name is claimed forever the first time it goes out.
-The gate exists so that an ordinary commit to `main` cannot trigger a release;
-it does not make the release itself reversible.
+The per-crate check exists so that an ordinary commit to `main` cannot trigger a
+release; it does not make the release itself reversible.
 
 ## Doing it by hand instead
 
