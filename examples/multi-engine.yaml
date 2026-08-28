@@ -1,0 +1,53 @@
+# A keyspace part-way through an engine migration.
+#
+# Two shards are still on MySQL, two have already moved to PostgreSQL. The gate
+# serves the whole keyspace throughout: each shard's statement is rendered for
+# the engine that shard actually runs, so a client sees one database and never
+# knows the difference.
+#
+# Passwords come from the environment, so this file is safe to commit.
+
+cells: [zone1]
+
+keyspaces:
+  - name: commerce
+    # The keyspace default. Individual shards override it below.
+    dialect: mysql
+    sharded: true
+    shards: ["-40", "40-80", "80-c0", "c0-"]
+
+    tablets:
+      # Not yet moved.
+      - shard: "-40"
+        dsn: "mysql://vituss:${MYSQL_PASSWORD}@mysql-1:3306/commerce_0"
+        database: commerce_0
+      - shard: "40-80"
+        dsn: "mysql://vituss:${MYSQL_PASSWORD}@mysql-2:3306/commerce_1"
+        database: commerce_1
+
+      # Already moved. The dialect override is the whole change.
+      - shard: "80-c0"
+        dialect: postgres
+        dsn: "postgres://vituss:${PG_PASSWORD}@pg-1:5432/commerce"
+        schema: commerce_2
+      - shard: "c0-"
+        dialect: postgres
+        dsn: "postgres://vituss:${PG_PASSWORD}@pg-2:5432/commerce"
+        schema: commerce_3
+
+      # A replica, for reads sent with `USE commerce@replica`.
+      - shard: "-40"
+        tablet_type: replica
+        dsn: "mysql://vituss:${MYSQL_PASSWORD}@mysql-1-replica:3306/commerce_0"
+        database: commerce_0
+
+    vschema:
+      vindexes:
+        hash: { type: hash }
+      tables:
+        user:
+          column_vindexes:
+            - { column: user_id, name: hash }
+        corder:
+          column_vindexes:
+            - { column: user_id, name: hash }

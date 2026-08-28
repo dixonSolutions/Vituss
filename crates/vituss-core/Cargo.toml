@@ -1,0 +1,16 @@
+[package]
+name = "vituss-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Core value, result, key-range and error types shared by all Vituss components"
+
+[dependencies]
+thiserror.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+chrono.workspace = true
+rust_decimal.workspace = true
+uuid.workspace = true
+hex.workspace = true
+bytes.workspace = true

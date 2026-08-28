@@ -1,0 +1,35 @@
+[package]
+name = "vituss-wire"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Client-facing wire protocol servers: clients connect to Vituss with their own driver"
+
+[features]
+default = ["mysql-server", "postgres-server"]
+mysql-server = ["dep:opensrv-mysql"]
+postgres-server = ["dep:pgwire"]
+
+[dependencies]
+vituss-core.workspace = true
+vituss-dialect.workspace = true
+vituss-gate.workspace = true
+vituss-planner.workspace = true
+vituss-engine.workspace = true
+async-trait.workspace = true
+tokio = { workspace = true }
+futures.workspace = true
+tracing.workspace = true
+bytes.workspace = true
+chrono.workspace = true
+rust_decimal.workspace = true
+
+opensrv-mysql = { workspace = true, optional = true }
+pgwire = { workspace = true, optional = true }
+
+[dev-dependencies]
+vituss-topo.workspace = true
+vituss-backend = { workspace = true, features = ["sqlite"] }
+tempfile = "3"
+serde_json.workspace = true
+sqlx = { workspace = true, features = ["mysql"] }

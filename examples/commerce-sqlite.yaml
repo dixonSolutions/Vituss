@@ -1,0 +1,51 @@
+# A four-shard commerce keyspace plus an unsharded keyspace for the sequence and
+# the lookup table. Every shard is a SQLite file, so this runs with no servers to
+# install — the same file with `dialect: mysql` and real DSNs is a real cluster.
+
+cells: [zone1]
+
+keyspaces:
+  - name: commerce
+    dialect: sqlite
+    sharded: true
+    shards: 4
+    dsn_template: "sqlite:./data/{keyspace}_{shard}.db"
+    vschema:
+      vindexes:
+        # Bit-compatible with Vitess's `hash`, so an existing Vitess keyspace maps
+        # to the same shards.
+        hash: { type: hash }
+        # Lets `WHERE email = ?` be routed without scattering, at the cost of one
+        # lookup round trip. Owned by `user`, so Vituss maintains it on writes.
+        email_idx:
+          type: lookup_unique
+          owner: user
+          params:
+            table: email_lookup
+            from: email
+            to: keyspace_id
+      tables:
+        user:
+          column_vindexes:
+            - { column: user_id, name: hash }
+            - { column: email, name: email_idx }
+          auto_increment: { column: user_id, sequence: main.user_seq }
+        corder:
+          # Sharded by user_id rather than order_id, so a user's orders live
+          # beside the user and the join never crosses a shard.
+          column_vindexes:
+            - { column: user_id, name: hash }
+        country:
+          type: reference
+          source: main.country
+
+  - name: main
+    dialect: sqlite
+    sharded: false
+    shards: 1
+    dsn_template: "sqlite:./data/{keyspace}.db"
+    vschema:
+      tables:
+        user_seq: { type: sequence }
+        email_lookup: {}
+        country: {}
